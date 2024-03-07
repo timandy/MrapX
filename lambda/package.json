@@ -1,0 +1,22 @@
+{
+  "name": "mrapx-sign",
+  "version": "1.0.0",
+  "description": "Sign Request for AWS S3 Multi-Region Access Points (MRAP)",
+  "main": "index.js",
+  "scripts": {
+    "clean": "rm -rf package-lock.json node_modules dist",
+    "prebuild": "npm install",
+    "build": "tsc",
+    "package": "cp -rf node_modules dist/ && cd dist && zip -r ./mrapx-sign.zip . && cd .."
+  },
+  "keywords": [],
+  "author": "TimAndy",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^20.10.8",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "aws-crt": "^1.20.1"
+  }
+}
