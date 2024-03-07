@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  S3LambdaDeployBucketName:
+    Description: |
+      The name of an existing Amazon S3 bucket where the lambda function package is stored, which must be in the us-east-1 region.
+    Type: String
+  S3FailoverBucketName:
+    Description: |
+      The name of an existing Amazon S3 bucket that receive failover requests.
+    Type: String
+  S3FailoverBucketRegion:
+    Description: |
+      The region of an existing Amazon S3 bucket that receive failover requests.
+    Type: String
+  MrapAliasName:
+    Description: |
+      The alias of Amazon S3 Multi Region Access Point.
+    Type: String
+
+Resources:
+  LambdaPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${AWS::StackName}-LambdaPolicy'
+      Description: !Sub '${AWS::StackName} LambdaPolicy'
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 's3:GetObject'
+            Resource: '*'
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - edgelambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - !Ref LambdaPolicy
+
+  LambdaFunc:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-SignFunc'
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Architectures:
+        - x86_64
+      MemorySize: 300
+      Timeout: 10
+      Code:
+        S3Bucket: !Sub '${S3LambdaDeployBucketName}'
+        S3Key: package/mrapx-sign.zip
+
+  LambdaVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref LambdaFunc
+
+  CloudFrontCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub '${AWS::StackName}-CachePolicy'
+        Comment: !Sub '${AWS::StackName} CachePolicy'
+        DefaultTTL: 31536000
+        MinTTL: 31536000
+        MaxTTL: 31536000
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+          EnableAcceptEncodingBrotli: true
+          EnableAcceptEncodingGzip: true
+
+  CloudFrontOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub '${AWS::StackName}-OriginRequestPolicy'
+        Comment: !Sub '${AWS::StackName} OriginRequestPolicy'
+        CookiesConfig:
+          CookieBehavior: none
+        HeadersConfig:
+          HeaderBehavior: allExcept
+          Headers:
+            - Host
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  CloudFrontResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${AWS::StackName}-ResponseHeadersPolicy'
+        Comment: !Sub '${AWS::StackName} ResponseHeadersPolicy'
+        CorsConfig:
+          AccessControlAllowCredentials: false
+          AccessControlAllowHeaders:
+            Items:
+              - '*'
+          AccessControlAllowMethods:
+            Items:
+              - ALL
+          AccessControlAllowOrigins:
+            Items:
+              - '*'
+          AccessControlExposeHeaders:
+            Items: [ ]
+          AccessControlMaxAgeSec: 600
+          OriginOverride: false
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: false
+            Preload: false
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          XSSProtection:
+            Protection: true
+            ModeBlock: true
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: same-origin
+            Override: true
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-CloudFrontOAC'
+        Description: !Sub '${AWS::StackName} CloudFrontOAC'
+        SigningProtocol: sigv4
+        SigningBehavior: always
+        OriginAccessControlOriginType: s3
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub '${AWS::StackName}'
+        Enabled: true
+        Origins:
+          - Id: mrap-origin
+            DomainName: !Sub '${MrapAliasName}.accesspoint.s3-global.amazonaws.com'
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+          - Id: s3-origin
+            DomainName: !Sub '${S3FailoverBucketName}.s3.${S3FailoverBucketRegion}.amazonaws.com'
+            OriginAccessControlId: !Sub '${CloudFrontOAC.Id}'
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        OriginGroups:
+          Quantity: 1
+          Items:
+            - Id: origin-group
+              Members:
+                Quantity: 2
+                Items:
+                  - OriginId: mrap-origin
+                  - OriginId: s3-origin
+              FailoverCriteria:
+                StatusCodes:
+                  Quantity: 2
+                  Items:
+                    - 403
+                    - 404
+        DefaultCacheBehavior:
+          TargetOriginId: origin-group
+          Compress: true
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachePolicyId: !Ref CloudFrontCachePolicy
+          OriginRequestPolicyId: !Ref CloudFrontOriginRequestPolicy
+          ResponseHeadersPolicyId: !Ref CloudFrontResponseHeadersPolicy
+          LambdaFunctionAssociations:
+            - EventType: origin-request
+              LambdaFunctionARN: !Ref LambdaVersion
+              IncludeBody: false
+
+  FailoverBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Sub '${S3FailoverBucketName}'
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: !Sub '${AWS::StackName}-FailoverBucketPolicy'
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action:
+              - 's3:GetObject'
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3FailoverBucketName}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution.Id}'
+
+Outputs:
+  DistributionId:
+    Value: !Sub '${CloudFrontDistribution.Id}'
+  DistributionDns:
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
