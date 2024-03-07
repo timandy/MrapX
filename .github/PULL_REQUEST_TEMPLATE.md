@@ -1,0 +1,3 @@
+- With pull requests:
+  - Open your pull request against `main` branch.
+  - If your pull request contains a new feature, please document it on the README.md and README_zh.md.

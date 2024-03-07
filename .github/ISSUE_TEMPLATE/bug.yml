@@ -1,0 +1,40 @@
+name: Bugs
+description: Create a report to help us improve
+title: "[Bug] <title>"
+labels: [ "bug" ]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to fill out this bug report!
+
+  - type: checkboxes
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search to see if an issue already exists for the bug you encountered.
+      options:
+        - label: I have searched the existing issues
+          required: true
+
+  - type: checkboxes
+    attributes:
+      label: Does this issue reproduce with the latest release?
+      description: Please upgrade to the latest version to see if the issue still exists.
+      options:
+        - label: I have upgrade to the latest version
+          required: true
+
+  - type: textarea
+    attributes:
+      label: Steps To Reproduce
+      description: The smallest possible code example to show the problem that can be compiled.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](../blob/main/CODE_OF_CONDUCT.md)
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
